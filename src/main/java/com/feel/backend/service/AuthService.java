@@ -13,10 +13,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.format.DateTimeFormatter;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AuthService {
+
+    private static final DateTimeFormatter SUSPENDED_UNTIL_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final AdminUserRepository adminUserRepository;
     private final UserRepository userRepository;
@@ -64,6 +68,7 @@ public class AuthService {
             throw new RuntimeException("유효하지 않은 토큰입니다. 다시 로그인해주세요.");
         }
         String username = getUsernameFromToken(token);
+        assertAccountUsable(username, role);
         if (role == AuthRole.USER) {
             User user = userRepository.findByEmail(username)
                     .orElseThrow(() -> new RuntimeException("회원 정보를 찾을 수 없습니다."));
@@ -150,10 +155,67 @@ public class AuthService {
         if (!validateToken(token)) {
             throw new RuntimeException("유효하지 않은 토큰입니다.");
         }
-        if (jwtUtil.getRoleFromToken(token) == null) {
+        AuthRole role = jwtUtil.getRoleFromToken(token);
+        if (role == null) {
             throw new RuntimeException("유효하지 않은 토큰입니다. 다시 로그인해주세요.");
         }
+        assertAccountUsable(getUsernameFromToken(token), role);
         return token;
+    }
+
+    /**
+     * JWT는 발급 후 24시간 유효하므로, 정지·권한 해제가 즉시 반영되도록 요청마다 DB 상태를 확인한다.
+     * - ADMIN: admin_users 계정이거나, 관리자 권한(role=ADMIN)을 가진 정상 회원
+     * - USER: 정지되지 않은 회원
+     */
+    private void assertAccountUsable(String subject, AuthRole role) {
+        if (role == AuthRole.ADMIN) {
+            if (adminUserRepository.existsByUsername(subject)) {
+                return;
+            }
+            User user = userRepository.findByEmail(subject)
+                    .orElseThrow(() -> new RuntimeException("관리자 계정을 찾을 수 없습니다. 다시 로그인해주세요."));
+            assertNotSuspended(user);
+            if (!user.isAdmin()) {
+                throw new RuntimeException("관리자 권한이 없는 계정입니다.");
+            }
+            return;
+        }
+        User user = userRepository.findByEmail(subject)
+                .orElseThrow(() -> new RuntimeException("회원 정보를 찾을 수 없습니다."));
+        assertNotSuspended(user);
+    }
+
+    private void assertNotSuspended(User user) {
+        if (!user.isSuspended()) {
+            return;
+        }
+        String period = user.getSuspendedUntil() == null
+                ? "영구 정지"
+                : user.getSuspendedUntil().format(SUSPENDED_UNTIL_FORMAT) + "까지";
+        throw new RuntimeException("이용이 정지된 계정입니다. (" + period + ", 사유: " + user.getSuspendReason() + ")");
+    }
+
+    /**
+     * 관리자 페이지 Google 로그인. 관리자 권한(role=ADMIN)을 가진 정상 회원만 ADMIN 토큰 발급.
+     */
+    public LoginResponse adminGoogleLogin(String idToken) {
+        GoogleTokenInfo info = googleTokenVerifier.verify(idToken);
+        String email = info.getEmail();
+        if (email == null || email.isBlank() || !GoogleTokenVerifier.isAllowedEmail(email)) {
+            throw new RuntimeException("전북대학교 웹메일(@jbnu.ac.kr)로만 로그인할 수 있습니다.");
+        }
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("관리자 권한이 없는 계정입니다."));
+        assertNotSuspended(user);
+        if (!user.isAdmin()) {
+            throw new RuntimeException("관리자 권한이 없는 계정입니다.");
+        }
+        return LoginResponse.builder()
+                .token(jwtUtil.generateToken(email, AuthRole.ADMIN))
+                .username(email)
+                .nickname(user.getNickname())
+                .build();
     }
 
     /**
@@ -171,18 +233,21 @@ public class AuthService {
             throw new RuntimeException("전북대학교 웹메일(@jbnu.ac.kr)로만 로그인할 수 있습니다.");
         }
 
-        return userRepository.findByEmail(email)
-                .map(user -> LoginResponse.builder()
-                        .id(user.getId())
-                        .token(jwtUtil.generateToken(email, AuthRole.USER))
-                        .username(email)
-                        .nickname(user.getNickname())
-                        .needSignup(false)
-                        .build())
-                .orElse(LoginResponse.builder()
-                        .needSignup(true)
-                        .email(email)
-                        .build());
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            return LoginResponse.builder()
+                    .needSignup(true)
+                    .email(email)
+                    .build();
+        }
+        assertNotSuspended(user);
+        return LoginResponse.builder()
+                .id(user.getId())
+                .token(jwtUtil.generateToken(email, AuthRole.USER))
+                .username(email)
+                .nickname(user.getNickname())
+                .needSignup(false)
+                .build();
     }
 
     /**
