@@ -3,6 +3,7 @@ package com.feel.backend.controller;
 import com.feel.backend.dto.ErrorResponse;
 import com.feel.backend.dto.ResourceFileDto;
 import com.feel.backend.service.AuthService;
+import com.feel.backend.service.FinanceReportService;
 import com.feel.backend.service.ResourceFileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -21,6 +22,7 @@ import java.util.Map;
 public class ResourceFileController {
 
     private final ResourceFileService resourceFileService;
+    private final FinanceReportService financeReportService;
     private final AuthService authService;
 
     /**
@@ -170,7 +172,8 @@ public class ResourceFileController {
     public ResponseEntity<Map<String, Long>> getStats() {
         return ResponseEntity.ok(Map.of(
                 "inspection", resourceFileService.getCountByCategory("inspection"),
-                "finance", resourceFileService.getCountByCategory("finance"),
+                // 회계내역은 finance_reports 테이블에 별도 저장됨
+                "finance", financeReportService.getTotalCount(),
                 "gallery", resourceFileService.getCountByCategory("gallery"),
                 "study-support", resourceFileService.getCountByCategory("study-support")
         ));

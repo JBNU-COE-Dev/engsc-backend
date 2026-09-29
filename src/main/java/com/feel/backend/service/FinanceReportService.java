@@ -69,6 +69,13 @@ public class FinanceReportService {
     }
 
     /**
+     * 회계 보고서 전체 개수
+     */
+    public long getTotalCount() {
+        return financeReportRepository.count();
+    }
+
+    /**
      * 회계 보고서 등록
      */
     @Transactional
