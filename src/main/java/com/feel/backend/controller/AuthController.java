@@ -33,6 +33,20 @@ public class AuthController {
         }
     }
 
+    /** 관리자 페이지 Google 로그인 (관리자 권한을 받은 회원만) */
+    @PostMapping("/admin/google")
+    public ResponseEntity<?> adminGoogleLogin(@Valid @RequestBody GoogleLoginRequest request) {
+        try {
+            LoginResponse response = authService.adminGoogleLogin(request.getIdToken());
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            ErrorResponse errorResponse = ErrorResponse.builder()
+                    .message(e.getMessage())
+                    .build();
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
+        }
+    }
+
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest request) {
         try {
